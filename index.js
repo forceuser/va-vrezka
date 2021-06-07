@@ -13,6 +13,8 @@ import matchAll from "string.prototype.matchall";
 import {Buffer} from "buffer";
 import express from "express";
 import http from "http";
+import fp from "find-free-port";
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = nodePath.dirname(__filename);
@@ -119,7 +121,8 @@ async function $preview (argv) {
 
 	const server = http.createServer(expressApp);
 
-	server.listen(3000, "0.0.0.0", (req, res) => {
+	const [port] = await fp(3000);
+	server.listen(port, "0.0.0.0", (req, res) => {
 		const addr = server.address();
 		console.log(`Preview server listening at http://${addr.address}:${addr.port}`);
 	});

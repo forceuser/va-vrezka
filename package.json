@@ -1,0 +1,38 @@
+{
+	"name": "va-vrezka",
+	"version": "1.0.0",
+	"description": "",
+	"main": "index.js",
+	"type": "module",
+	"va-release": {
+		"owner": "forceuser",
+		"library": "vaVrezka"
+	},
+	"engines": {
+		"node": ">=14.1.0"
+	},
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"bin": "index.js",
+	"author": "",
+	"license": "ISC",
+	"dependencies": {
+		"express": "^4.17.1",
+		"find-free-port": "^2.0.0",
+		"fs-extra": "^10.0.0",
+		"globby": "^11.0.3",
+		"jsdom": "^16.6.0",
+		"minify": "^7.0.2",
+		"open": "^8.2.0",
+		"pretty": "^2.0.0",
+		"puppeteer": "^10.0.0",
+		"string.prototype.matchall": "^4.0.5",
+		"string.prototype.replaceall": "^1.0.5",
+		"yargs": "^17.0.1"
+	},
+	"devDependencies": {
+		"@babel/eslint-parser": "^7.14.4",
+		"eslint": "^7.27.0"
+	}
+}

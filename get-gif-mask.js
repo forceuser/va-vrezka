@@ -143,23 +143,23 @@ function boxblur (canvas, radius = 0, {iterations = 1, x = 0, y = 0, width, heig
 }
 
 async function getMasks () {
-	const images = Array.from(document.querySelectorAll("img")).filter(function (img) {
+	const images = Array.from(document.querySelectorAll("img")).filter((img) => {
 		return (img.src || "").match(/\.gif$/);
 	});
 
 	function getPoint (x, y, {data, width = data.length, size = 4} = {}) {
-		var i = (y * width * size) + (x * size);
+		let i = (y * width * size) + (x * size);
 		return Array.prototype.slice.call(data, i, i + size);
 	}
 
 	function setPoint (x, y, {data, width = data.length, size = 4} = {}, rgba) {
-		var i = (y * width * size) + (x * size);
-		for (var j = 0; j < size; j++) {
+		let i = (y * width * size) + (x * size);
+		for (let j = 0; j < size; j++) {
 			data[i + j] = rgba[j];
 		}
-	};
+	}
 
-	function deltaE(rgbA, rgbB) {
+	function deltaE (rgbA, rgbB) {
 		let labA = rgb2lab(rgbA);
 		let labB = rgb2lab(rgbB);
 		let deltaL = labA[0] - labB[0];
@@ -179,18 +179,18 @@ async function getMasks () {
 		return i < 0 ? 0 : Math.sqrt(i);
 	}
 
-	function rgb2lab(rgb){
-		let r = rgb[0] / 255, g = rgb[1] / 255, b = rgb[2] / 255, x, y, z;
+	function rgb2lab (rgb) {
+		let r = rgb[0] / 255; let g = rgb[1] / 255; let b = rgb[2] / 255; let x; let y; let z;
 		r = (r > 0.04045) ? Math.pow((r + 0.055) / 1.055, 2.4) : r / 12.92;
 		g = (g > 0.04045) ? Math.pow((g + 0.055) / 1.055, 2.4) : g / 12.92;
 		b = (b > 0.04045) ? Math.pow((b + 0.055) / 1.055, 2.4) : b / 12.92;
 		x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047;
 		y = (r * 0.2126 + g * 0.7152 + b * 0.0722) / 1.00000;
 		z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
-		x = (x > 0.008856) ? Math.pow(x, 1/3) : (7.787 * x) + 16/116;
-		y = (y > 0.008856) ? Math.pow(y, 1/3) : (7.787 * y) + 16/116;
-		z = (z > 0.008856) ? Math.pow(z, 1/3) : (7.787 * z) + 16/116;
-		return [(116 * y) - 16, 500 * (x - y), 200 * (y - z)]
+		x = (x > 0.008856) ? Math.pow(x, 1 / 3) : (7.787 * x) + 16 / 116;
+		y = (y > 0.008856) ? Math.pow(y, 1 / 3) : (7.787 * y) + 16 / 116;
+		z = (z > 0.008856) ? Math.pow(z, 1 / 3) : (7.787 * z) + 16 / 116;
+		return [(116 * y) - 16, 500 * (x - y), 200 * (y - z)];
 	}
 
 	function fill (canvas, fuzz = 32, fillColor = [0, 0, 0, 0], pixelStack = []) {
@@ -206,11 +206,11 @@ async function getMasks () {
 		pixelStack.push([w - 1, 0]);
 		pixelStack.push([0, h - 1]);
 		pixelStack.push([w - 1, h - 1]);
-		function getPPoint(x, y) {
+		function getPPoint (x, y) {
 			return getPoint(x, y, {data: proc, width: w, size: 1})[0];
 		}
 
-		function setPPoint(x, y, val) {
+		function setPPoint (x, y, val) {
 			setPoint(x, y, {data: proc, width: w, size: 1}, [val]);
 		}
 
@@ -255,20 +255,26 @@ async function getMasks () {
 
 	return images.reduce(async (list, img) => {
 		list = await list;
-
-		var canvas = document.createElement("canvas");
+		await new Promise((resolve, reject) => {
+			const start = Date.now();
+			const interv = setInterval(() => {
+				if (img.complete && img.naturalWidth && img.naturalHeight) {
+					clearInterval(interv);
+					resolve();
+				}
+				else if (Date.now() - start > 5000) {
+					clearTimeout(interv);
+					throw new Error(`Failed to load image ${img.src}`);
+				}
+			}, 20);
+		});
+		let canvas = document.createElement("canvas");
 		canvas.width = img.naturalWidth;
 		canvas.height = img.naturalHeight;
-		var ctx = canvas.getContext("2d");
+		let ctx = canvas.getContext("2d");
 		ctx.drawImage(img, 0, 0);
-		var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-		var w = canvas.width;
-		var h = canvas.height;
-		var $p = getPoint(0, 0, imageData);
 		fill(canvas, 50);
-		// img.style["-webkit-mask-image"] = "url(" + canvas.toDataURL()+ ")";
-		// img.parentElement.style.filter = "drop-shadow(0px -2px 0px rgba(140,140,140, 0.3)) drop-shadow(0px 2px 0px rgba(140,140,140, 0.3))";
 
 		list.push({
 			src: img.src,

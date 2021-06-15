@@ -14,12 +14,14 @@ import {Buffer} from "buffer";
 import express from "express";
 import http from "http";
 import fp from "find-free-port";
+import open from "open";
 
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = nodePath.dirname(__filename);
 
-const createLogger = (srcDir = process.cwd(), srcFile = "log.txt") => {
+let globalLogFile;
+const createLogger = (srcDir = process.cwd(), srcFile = globalLogFile || "log.txt") => {
 	const logFile = fs.createWriteStream(nodePath.resolve(srcDir, srcFile), {"flags": "a"});
 	function logger (...args) {
 		// console.log(...args);
@@ -33,12 +35,14 @@ const createLogger = (srcDir = process.cwd(), srcFile = "log.txt") => {
 
 let log;
 
+
 function escapeRegex (string) {
 	return string.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
 }
 
 async function $preview (argv) {
 	const srcDir = nodePath.resolve(process.cwd(), argv.srcDir);
+	const cmdType = argv.type || "processed";
 
 	log = createLogger(srcDir);
 
@@ -53,9 +57,10 @@ async function $preview (argv) {
 	await fs.ensureDir(processedHtmlDir);
 	await fs.ensureDir(processedImgDir);
 
-	const filesDir = argv.type === "processed" ? processedHtmlDir : extractedDir;
+	const filesDir = cmdType ? processedHtmlDir : extractedDir;
 
 	log(`===== START - PREVIEW - ${srcDir} - ${filesDir}`);
+	console.log(`===== START - PREVIEW - ${srcDir} - ${filesDir}`);
 
 	const files = await globby(["./*.html"], {cwd: filesDir, absolute: true});
 
@@ -67,23 +72,25 @@ async function $preview (argv) {
 
 	router.get("/", async (req, res) => {
 		let manifest = {};
-		if (argv.type === "processed" && argv.localFiles) {
+		if (cmdType === "processed") {
 			manifest = JSON.parse(await fs.readFile(nodePath.join(processedDir, "manifest.json"), "utf8"));
 		}
+		// console.log("manifest", manifest);
+		// console.log(processedDir);
 		// list files
 		res.set("Content-Type", "text/html");
 		const style = `<style>*{font-family:sans-serif}table{border-collapse:collapse;margin:25px 0;font-size:.9em;min-width:400px;border-radius:5px 5px 0 0;overflow:hidden;box-shadow:0 0 20px rgba(0,0,0,.15)}table thead tr{background-color:#009879;color:#fff;text-align:left;font-weight:700}table td,table th{padding:12px 15px}table tbody tr{border-bottom:1px solid #ddd}table tbody tr:nth-of-type(even){background-color:#f3f3f3}table tbody tr:last-of-type{border-bottom:2px solid #009879}</style>`;
-		const html = style + `<table><thead><tr><th>html item</th><th>gifs</th><th>masks</th><th>amazon repl</th></tr></thead><tbody>${files.map(fileAbs => {
+		const html = style + `<!doctype HTML><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0"/><title>va-vrezka preview ${filesDir}</title></head><body><table><thead><tr><th>html item</th><th>gifs</th><th>masks</th><th>string replaced</th></tr></thead><tbody>${files.map(fileAbs => {
 			const file = nodePath.relative(filesDir, fileAbs);
 			return [
 				`<tr>`,
 				`<td><a href="/html/${file}" target="_blank">${file}</a></td>`,
 				`<td>${(manifest?.[file]?.gifs ?? []).map($ => `<a href="/img/${nodePath.basename($)}" target="_blank">${$}</a>`)?.join("<br/>\n")}</td>`,
 				`<td>${(manifest?.[file]?.masks ?? []).map($ => `<a href="/img/${nodePath.basename($)}" target="_blank">${$}</a>`)?.join("<br/>\n")}</td>`,
-				`<td>${manifest?.[file]?.replacedDirecAmazunUrl ?? ""}</td>`,
+				`<td>${manifest?.[file]?.stringReplaced ?? ""}</td>`,
 				`</tr>`,
 			].join("\n");
-		}).join("\n")}</tbody></table>`;
+		}).join("\n")}</tbody></table></body></html>`;
 		res.send(Buffer.from(html));
 	});
 
@@ -92,7 +99,7 @@ async function $preview (argv) {
 		res.set("Content-Type", "text/html");
 		const file = req.params.file;
 		let html = await fs.readFile(nodePath.join(filesDir, file), "utf8");
-		if (argv.type === "processed" && argv.localFiles) {
+		if (cmdType === "processed" && argv.localFiles) {
 			const manifest = JSON.parse(await fs.readFile(nodePath.join(processedDir, "manifest.json"), "utf8"));
 			const fileMeta = manifest[file];
 			if (fileMeta && fileMeta.gifs) {
@@ -113,7 +120,7 @@ async function $preview (argv) {
 		res.send(html);
 	});
 
-	if (argv.type === "processed") {
+	if (cmdType === "processed") {
 		router.use("/img", express.static(processedImgDir));
 	}
 
@@ -125,11 +132,19 @@ async function $preview (argv) {
 	server.listen(port, "0.0.0.0", (req, res) => {
 		const addr = server.address();
 		console.log(`Preview server listening at http://${addr.address}:${addr.port}`);
+		open(`http://${addr.address}:${addr.port}`);
 	});
+}
+
+async function fileExists (file) {
+	return fs.access(file, fs.constants.F_OK)
+		.then(() => true)
+		.catch(() => false);
 }
 
 async function $compile (argv) {
 	const srcDir = nodePath.resolve(process.cwd(), argv.srcDir);
+	const cmdType = argv.type || "processed";
 
 	log = createLogger(srcDir);
 
@@ -144,27 +159,46 @@ async function $compile (argv) {
 	await fs.ensureDir(processedHtmlDir);
 	await fs.ensureDir(processedImgDir);
 
-	const filesDir = argv.type === "processed" ? processedHtmlDir : extractedDir;
+	const filesDir = cmdType === "processed" ? processedHtmlDir : extractedDir;
 
 	log(`===== START - COMPILE - ${srcDir} - ${filesDir}`);
+	console.log(`===== START - COMPILE - ${srcDir} - ${filesDir}`);
 
 	const files = await globby(["./*.html"], {cwd: filesDir, absolute: true});
+	const compiled = new Set();
 
-	return files.reduce(async (prev, fileAbs) => {
+	await files.reduce(async (prev, fileAbs) => {
 		await prev;
 		try {
 			const file = nodePath.relative(filesDir, fileAbs);
 			const [, name, idx] = file.match(/^(.+?)\-\-(\d+)\.html$/i);
 			const fn = nodePath.join(compiledDir, `${name}.json`);
-			console.log("compile", nodePath.relative(srcDir, fileAbs), "->", nodePath.relative(srcDir, fn), `:items[${idx}].value.text`);
-			const data = JSON.parse(await fs.readFile(nodePath.join(srcDir, `${name}.json`), "utf8"));
-			data.items[idx].value.text = await fs.readFile(fileAbs, "utf8");
+			// console.log("compile", nodePath.relative(srcDir, fileAbs), "->", nodePath.relative(srcDir, fn), `:items[${idx}].value.text`);
+			const data = compiled.has(fn) ? JSON.parse(await fs.readFile(fn, "utf8")) : JSON.parse(await fs.readFile(nodePath.join(srcDir, `${name}.json`), "utf8"));
+			let content = await fs.readFile(fileAbs, "utf8");
+			log("Minifying html...", fileAbs);
+			content = await minify.html(content, {
+				html: {
+					"removeAttributeQuotes": false,
+					"removeOptionalTags": false,
+					"removeRedundantAttributes": false,
+					"useShortDoctype": false,
+					"removeEmptyAttributes": false,
+					"removeEmptyElements": false,
+				},
+			});
+			data.items[idx].value.text = content;
+			log("Putting html content into json:", fn);
+			log(`items[${idx}].value.text=`, fileAbs);
 			await fs.writeFile(fn, JSON.stringify(data), "utf8"); // .replace(".json", "--fix.json")
+			compiled.add(fn);
 		}
 		catch (error) {
 			log(`Error`, error.message, fileAbs);
 		}
 	}, null);
+
+	console.log(`${compiled.size} file(s) compiled to`, compiledDir);
 }
 
 async function $process (argv) {
@@ -183,19 +217,21 @@ async function $process (argv) {
 	await fs.ensureDir(processedImgDir);
 
 	log(`===== START - PROCESS - ${srcDir}`);
+	console.log(`===== START - PROCESS - ${srcDir}`);
 
 	// console.log("files", files);;
 	const files = await globby(["./*.html"], {cwd: extractedDir, absolute: true});
 
 	const manifest = {};
-	return files.reduce(async (prev, fileAbs) => {
+	const count = files.length;
+	await files.reduce(async (prev, fileAbs, idx) => {
 		await prev;
 		try {
 			log(`=== Processing file`, fileAbs);
 			const file = nodePath.relative(extractedDir, fileAbs);
 
 			const htmlFile = nodePath.resolve(extractedDir, file);
-			console.log("htmlFile", htmlFile);
+			console.log(`[${idx + 1}/${count}]`, "processing:", htmlFile);
 			log(`Opening puppeteer...`);
 			const browser = await puppeteer.launch({
 				headless: true,
@@ -207,7 +243,37 @@ async function $process (argv) {
 			});
 			log(`Puppeteer opened`);
 			const page = await browser.newPage();
-			await page.goto(pathToFileURL(htmlFile));
+
+
+			// let content = await page.content();
+			let content = await fs.readFile(htmlFile, "utf8");
+			const occurWrongHttp = [...matchAll(content, "hhttps://")];
+			if (occurWrongHttp?.length) {
+				content = replaceAll(content, "hhttps://", "https://");
+				log(`Replacing wrong http string (${occurWrongHttp.length}):`);
+				manifest[file] = manifest[file] || {};
+				manifest[file].stringReplaced = (manifest[file].stringReplaced || 0) + occurWrongHttp.length;
+			}
+			if (content.includes("https://s3-eu-west-1.amazonaws.com/icons.ftband.net/")) {
+				const occurDirectAmazonUrl = [...matchAll(content, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/")];
+				log(`Replacing direct amazon urls (${occurDirectAmazonUrl.length}):`, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/", "->", "https://icons.monobank.com.ua/");
+				content = replaceAll(content, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/", "https://icons.monobank.com.ua/");
+
+				manifest[file] = manifest[file] || {};
+				manifest[file].stringReplaced = (manifest[file].stringReplaced || 0) + occurDirectAmazonUrl.length;
+			}
+			const occurOldCss = [...matchAll(content, "skk/monobank/skk-icons/icon-mdpi/css_ot_06_12.css")];
+			if (occurOldCss?.length) {
+				content = replaceAll(content, "skk/monobank/skk-icons/icon-mdpi/css_ot_06_12.css", "skk/monobank/other_skk/template.css");
+				log(`Replacing old css links string (${occurOldCss.length}):`);
+				manifest[file] = manifest[file] || {};
+				manifest[file].stringReplaced = (manifest[file].stringReplaced || 0) + occurOldCss.length;
+			}
+			// await page.goto(pathToFileURL(htmlFile));
+			// console.log("content", content);
+			await page.evaluate(async (content) => {
+				window.document.write(content);
+			}, content);
 			const script = await page.addScriptTag({path: nodePath.resolve(__dirname, "./get-gif-mask.js")});
 			await script.evaluateHandle((node) => {
 				node.id = "mask-script";
@@ -241,6 +307,8 @@ async function $process (argv) {
 
 			log(`Gifs found:`, masks.length);
 
+
+
 			await masks.reduce(async (prev, {maskBinary, imgBinary, src}) => {
 				await prev;
 
@@ -253,12 +321,16 @@ async function $process (argv) {
 				log(`Mask created:`, maskFile);
 
 
-				log(`Injecting mask to html...`);
+				log(`Injecting mask to html...`, src);
 				await page.evaluate(async (src) => {
 					[...document.querySelectorAll("img")].forEach(img => {
+						// console.log("IMG.src", img.src, src, img.src === src);
 						if (img.src === src) {
-							img.style["-webkit-mask-image"] = `url(${src.replace(".gif", `--mask.png`)})`;
+							const maskStyle = `url('${encodeURI(src.replace(".gif", `--mask.png`))}')`;
+							// console.log("maskStyle", maskStyle);
+							img.style["-webkit-mask-image"] = maskStyle;
 							const div = document.createElement("div");
+							div.style.display = "contents";
 							div.style.filter = "drop-shadow(0px -2px 0px rgba(140,140,140, 0.3)) drop-shadow(0px 2px 0px rgba(140,140,140, 0.3))";
 							img.after(div);
 							div.append(img);
@@ -276,28 +348,9 @@ async function $process (argv) {
 			await script.evaluateHandle(node => {
 				node.remove();
 			});
-			let content = await page.content();
-			if (content.includes("https://s3-eu-west-1.amazonaws.com/icons.ftband.net/")) {
-				const occur = [...matchAll(content, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/")];
-				log(`Replacing direct amazon urls (${occur.length}):`, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/", "->", "https://icons.monobank.com.ua/");
-				content = replaceAll(content, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/", "https://icons.monobank.com.ua/");
 
-				manifest[file] = manifest[file] || {};
-				manifest[file].replacedDirecAmazonUrl = occur.length;
-			}
-
-			log("Minifying html...");
-			content = await minify.html(content, {
-				html: {
-					"removeAttributeQuotes": false,
-					"removeOptionalTags": false,
-					"removeRedundantAttributes": false,
-					"useShortDoctype": false,
-					"removeEmptyAttributes": false,
-					"removeEmptyElements": false,
-				},
-			});
-			console.log("htmlFile write", nodePath.resolve(processedHtmlDir, file));
+			content = await page.content();
+			console.log("ready");
 			log("Saving processed html to", nodePath.resolve(processedHtmlDir, file));
 			await fs.writeFile(nodePath.resolve(processedHtmlDir, file), content, "utf8");
 			log("Saving manifest to", nodePath.resolve(processedDir, "manifest.json"));
@@ -328,18 +381,24 @@ async function $extract (argv) {
 	await fs.ensureDir(processedImgDir);
 
 	log(`===== START - EXTRACT - ${srcDir}`);
-	// console.log("files", files);;
+	console.log(`===== START - EXTRACT - ${srcDir}`);
+
 	const files = await globby(["./*.json"], {cwd: srcDir, absolute: true});
-	return files.reduce(async (prev, fileAbs) => {
+	// console.log("files", files, srcDir);
+
+	const extracted = new Set();
+	const count = files.length;
+	await files.reduce(async (prev, fileAbs) => {
 		await prev;
 		try {
 			const file = nodePath.relative(srcDir, fileAbs);
 			log(`=== Extracting file`, fileAbs);
+			log(`file`, file);
 
-			if (file.endsWith("--fix.json")) {
-				return;
-			}
-			const data = JSON.parse(await fs.readFile(file, "utf8"));
+			// if (file.endsWith("--fix.json")) {
+			// 	return;
+			// }
+			const data = JSON.parse(await fs.readFile(nodePath.join(srcDir, file), "utf8"));
 			log(`file read success`);
 			log(`file items length`, (data.items || []).length);
 			await (data.items || []).reduce(async (prev, item, idx) => {
@@ -357,6 +416,7 @@ async function $extract (argv) {
 							}),
 							"utf8"
 						);
+						extracted.add(htmlFile);
 						log(`Extracting single html item`, idx, "success!");
 					}
 				}
@@ -369,16 +429,37 @@ async function $extract (argv) {
 		catch (error) {
 			log(`Error`, error.message, fileAbs);
 		}
-
-
-		// console.log("data", data);
 	}, null);
+	console.log(`${extracted.size} file(s) extracted to`, extractedDir);
 }
 
 async function main () {
 	const argv = await yargs(process.argv.slice(2))
 		// .parserConfiguration({"strip-aliased": true})
 		.command([
+			{
+				command: "all [srcDir]",
+				aliases: [],
+				describe: "extract html items from vrezka",
+				handler: async argv => {
+					console.log("== DOING ALL SEQENCE");
+					globalLogFile = `log-all--${new Date().toISOString().split(".")[0].replace("T", "_").replace(/\:/g, "-")}.txt`;
+					await $extract(argv);
+					await $process(argv);
+					await $compile(argv);
+					await $preview({...argv, localFiles: true});
+					console.log(`Generated log: `, nodePath.resolve(process.cwd(), argv.srcDir, globalLogFile));
+				},
+				builder: yargs => {
+					return yargs
+						.positional("srcDir", {
+							alias: ["s", "src"],
+							describe: "source dir",
+							type: "string",
+							default: ".",
+						});
+				},
+			},
 			{
 				command: "extract [srcDir]",
 				aliases: [],

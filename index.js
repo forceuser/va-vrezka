@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import process from "process";
-import nodePath, {basename} from "path";
+import nodePath, {basename, resolve} from "path";
 import fs from "fs-extra";
 import yargs from "yargs";
 import globby from "globby";
@@ -15,6 +15,7 @@ import express from "express";
 import http from "http";
 import fp from "find-free-port";
 import open from "open";
+import JSZip from "jszip";
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -85,8 +86,8 @@ async function $preview (argv) {
 			return [
 				`<tr>`,
 				`<td><a href="/html/${file}" target="_blank">${file}</a></td>`,
-				`<td>${(manifest?.[file]?.gifs ?? []).map($ => `<a href="/img/${nodePath.basename($)}" target="_blank">${$}</a>`)?.join("<br/>\n")}</td>`,
-				`<td>${(manifest?.[file]?.masks ?? []).map($ => `<a href="/img/${nodePath.basename($)}" target="_blank">${$}</a>`)?.join("<br/>\n")}</td>`,
+				`<td>${(manifest?.[file]?.gifs ?? []).map($ => `<a href="/img/${$.replace("processed/img/", "")}" target="_blank">${$}</a>`)?.join("<br/>\n")}</td>`,
+				`<td>${(manifest?.[file]?.masks ?? []).map($ => `<a href="/img/${$.replace("processed/img/", "")}" target="_blank">${$}</a>`)?.join("<br/>\n")}</td>`,
 				`<td>${manifest?.[file]?.stringReplaced ?? ""}</td>`,
 				`</tr>`,
 			].join("\n");
@@ -104,14 +105,14 @@ async function $preview (argv) {
 			const fileMeta = manifest[file];
 			if (fileMeta && fileMeta.gifs) {
 				fileMeta.gifs.forEach(gif => {
-					const base = nodePath.basename(gif);
+					const base = gif.replace("processed/img/", "");
 					const rx = new RegExp(`[^(;)"']+(${escapeRegex(base)})`, "gm");
 					html = (html || "").replace(rx, `/img/${base}`);
 				});
 			}
 			if (fileMeta && fileMeta.masks) {
 				fileMeta.masks.forEach(mask => {
-					const base = nodePath.basename(mask);
+					const base = mask.replace("processed/img/", "");
 					const rx = new RegExp(`[^(;)"']+(${escapeRegex(base)})`, "gm");
 					html = (html || "").replace(rx, `/img/${base}`);
 				});
@@ -141,6 +142,14 @@ async function fileExists (file) {
 		.then(() => true)
 		.catch(() => false);
 }
+
+function getFormattedDate (date = new Date()) {
+	const dt = new Date(date);
+	dt.setMinutes(dt.getMinutes() - dt.getTimezoneOffset());
+	return dt.toISOString().split(".")[0].replace("T", "_").replace(/\:/g, "-");
+}
+
+const outsideDir = "skk/monobank/skk-icons/icon-mdpi/outside";
 
 async function $compile (argv) {
 	const srcDir = nodePath.resolve(process.cwd(), argv.srcDir);
@@ -199,6 +208,39 @@ async function $compile (argv) {
 	}, null);
 
 	console.log(`${compiled.size} file(s) compiled to`, compiledDir);
+	try {
+		const zipFileName = nodePath.join(srcDir, `compiled--${getFormattedDate()}.zip`);
+		log("Creating zip file...", zipFileName);
+
+		const zip = new JSZip();
+		await (await globby(["compiled/*.json"], {cwd: srcDir, absolute: true})).reduce(async (prev, fileAbs) => {
+			await prev;
+			await zip.file(nodePath.relative(compiledDir, fileAbs), fs.createReadStream(fileAbs));
+		}, null);
+		await (await globby(["processed/img/**/*.png"], {cwd: srcDir, absolute: true})).reduce(async (prev, fileAbs) => {
+			await prev;
+			await zip.file(nodePath.join("to-amazon", nodePath.relative(processedImgDir, fileAbs)), fs.createReadStream(fileAbs));
+		}, null);
+		await (await globby([`processed/img/${outsideDir}/**/*.gif`], {cwd: srcDir, absolute: true})).reduce(async (prev, fileAbs) => {
+			await prev;
+			await zip.file(nodePath.join("to-amazon", nodePath.relative(processedImgDir, fileAbs)), fs.createReadStream(fileAbs));
+		}, null);
+
+
+		await new Promise(resolve => {
+			zip
+				.generateNodeStream({type: "nodebuffer", streamFiles: true})
+				.pipe(fs.createWriteStream(zipFileName))
+				.on("finish", () => {
+					resolve();
+				});
+		});
+
+		console.log(`Zip file created:`, zipFileName);
+	}
+	catch (error) {
+		log("Error", error.message);
+	}
 }
 
 async function $process (argv) {
@@ -226,6 +268,7 @@ async function $process (argv) {
 	const count = files.length;
 	await files.reduce(async (prev, fileAbs, idx) => {
 		await prev;
+		let browser;
 		try {
 			log(`=== Processing file`, fileAbs);
 			const file = nodePath.relative(extractedDir, fileAbs);
@@ -233,7 +276,7 @@ async function $process (argv) {
 			const htmlFile = nodePath.resolve(extractedDir, file);
 			console.log(`[${idx + 1}/${count}]`, "processing:", htmlFile);
 			log(`Opening puppeteer...`);
-			const browser = await puppeteer.launch({
+			browser = await puppeteer.launch({
 				headless: true,
 				ignoreHTTPSErrors: true,
 				args: [
@@ -254,8 +297,8 @@ async function $process (argv) {
 				manifest[file] = manifest[file] || {};
 				manifest[file].stringReplaced = (manifest[file].stringReplaced || 0) + occurWrongHttp.length;
 			}
-			if (content.includes("https://s3-eu-west-1.amazonaws.com/icons.ftband.net/")) {
-				const occurDirectAmazonUrl = [...matchAll(content, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/")];
+			const occurDirectAmazonUrl = [...matchAll(content, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/")];
+			if (occurDirectAmazonUrl?.length) {
 				log(`Replacing direct amazon urls (${occurDirectAmazonUrl.length}):`, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/", "->", "https://icons.monobank.com.ua/");
 				content = replaceAll(content, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/", "https://icons.monobank.com.ua/");
 
@@ -269,6 +312,15 @@ async function $process (argv) {
 				manifest[file] = manifest[file] || {};
 				manifest[file].stringReplaced = (manifest[file].stringReplaced || 0) + occurOldCss.length;
 			}
+
+			const occurTypo1 = [...matchAll(content, "skk/monobank/skk-icons/icon-mdpi/GIF/omy/cashback_4.gif/monobank/skk-icons/icon-mdpi/GIF/screencast-partner-cashback.gif")];
+			if (occurTypo1?.length) {
+				content = replaceAll(content, "skk/monobank/skk-icons/icon-mdpi/GIF/omy/cashback_4.gif/monobank/skk-icons/icon-mdpi/GIF/screencast-partner-cashback.gif", "https://icons.monobank.com.ua/skk/monobank/skk-icons/icon-mdpi/GIF/omy/cashback_4.gif");
+				log(`Replacing typo1 string (${occurTypo1.length}):`);
+				manifest[file] = manifest[file] || {};
+				manifest[file].stringReplaced = (manifest[file].stringReplaced || 0) + occurTypo1.length;
+			}
+
 			// await page.goto(pathToFileURL(htmlFile));
 			// console.log("content", content);
 			await page.evaluate(async (content) => {
@@ -281,8 +333,12 @@ async function $process (argv) {
 			log(`Searching/processing gifs...`);
 			const masks = await page.evaluate(async () => {
 				const masks = await window.getMasks();
-				return await masks.reduce(async (prev, item) => {
+				await masks.reduce(async (prev, item) => {
 					await prev;
+
+					if (!item.src.startsWith("https://icons.monobank.com.ua/")) {
+						item.outside = true;
+					}
 
 					item.maskBinary = await new Promise(resolve => {
 						const reader = new FileReader();
@@ -301,48 +357,68 @@ async function $process (argv) {
 							});
 					});
 
-					return masks;
-				}, masks);
+				}, null);
+				return masks;
 			});
 
 			log(`Gifs found:`, masks.length);
 
 
 
-			await masks.reduce(async (prev, {maskBinary, imgBinary, src}) => {
+			await masks.reduce(async (prev, {maskBinary, imgBinary, src, outside}) => {
 				await prev;
 
-				const gifFile = nodePath.resolve(processedImgDir, `${nodePath.basename(new URL(src).pathname)}`);
-				await fs.writeFile(gifFile, Buffer.from(imgBinary, "binary"));
-				log(`Original gif extracted:`, gifFile);
-
-				const maskFile = nodePath.resolve(processedImgDir, `${nodePath.basename(new URL(src).pathname, ".gif")}--mask.png`);
-				await fs.writeFile(maskFile, Buffer.from(maskBinary, "binary"));
-				log(`Mask created:`, maskFile);
 
 
 				log(`Injecting mask to html...`, src);
-				await page.evaluate(async (src) => {
+				let pathname = new URL(src).pathname.replace(/^\/+/, "");
+				if (outside) {
+					pathname = nodePath.join(outsideDir, nodePath.basename(pathname)).replace(/^\/+/, "");
+				}
+				const dir = nodePath.resolve(processedImgDir, nodePath.dirname(pathname));
+				const srcMod = `https://icons.monobank.com.ua/${pathname}`;
+				const some = await page.evaluate(async (src, srcMod) => {
+					let some = false;
 					[...document.querySelectorAll("img")].forEach(img => {
 						// console.log("IMG.src", img.src, src, img.src === src);
 						if (img.src === src) {
-							const maskStyle = `url('${encodeURI(src.replace(".gif", `--mask.png`))}')`;
-							// console.log("maskStyle", maskStyle);
-							img.style["-webkit-mask-image"] = maskStyle;
-							const div = document.createElement("div");
-							div.style.display = "contents";
-							div.style.filter = "drop-shadow(0px -2px 0px rgba(140,140,140, 0.3)) drop-shadow(0px 2px 0px rgba(140,140,140, 0.3))";
-							img.after(div);
-							div.append(img);
+							if (!img.closest("video")) {
+								const maskedEl = img.closest("video") ? img.closest("video") : img;
+								// console.log("maskStyle", maskStyle);
+								img.src = srcMod;
+								const maskStyle = `url('${encodeURI(srcMod.replace(".gif", `--mask.png`))}')`;
+								maskedEl.style["-webkit-mask-image"] = maskStyle;
+								const div = document.createElement("div");
+								div.style.display = "contents";
+								div.style.filter = "drop-shadow(0px -2px 0px rgba(140,140,140, 0.3)) drop-shadow(0px 2px 0px rgba(140,140,140, 0.3))";
+								maskedEl.after(div);
+								div.append(maskedEl);
+								some = true;
+							}
 						}
 					});
-				}, src);
-				log(`Mask has been successfuly injected!`);
-				manifest[file] = manifest[file] || {};
-				manifest[file].gifs = manifest[file].gifs || [];
-				manifest[file].gifs.push(nodePath.relative(srcDir, gifFile));
-				manifest[file].masks = manifest[file].masks || [];
-				manifest[file].masks.push(nodePath.relative(srcDir, maskFile));
+					return some;
+				}, src, srcMod);
+
+				if (some) {
+
+					log(`Image dir:`, dir);
+					await fs.ensureDir(dir);
+					const gifFile = nodePath.resolve(dir, `${nodePath.basename(pathname)}`);
+					await fs.writeFile(gifFile, Buffer.from(imgBinary, "binary"));
+					log(`Original gif extracted:`, gifFile);
+
+					const maskFile = nodePath.resolve(dir, `${nodePath.basename(pathname, ".gif")}--mask.png`);
+					await fs.writeFile(maskFile, Buffer.from(maskBinary, "binary"));
+					log(`Mask created:`, maskFile);
+
+					log(`Mask has been successfuly injected!`);
+					manifest[file] = manifest[file] || {};
+					manifest[file].gifs = manifest[file].gifs || [];
+					manifest[file].gifs.push(nodePath.relative(srcDir, gifFile));
+					manifest[file].masks = manifest[file].masks || [];
+					manifest[file].masks.push(nodePath.relative(srcDir, maskFile));
+				}
 			}, null);
 
 			await script.evaluateHandle(node => {
@@ -355,10 +431,13 @@ async function $process (argv) {
 			await fs.writeFile(nodePath.resolve(processedHtmlDir, file), content, "utf8");
 			log("Saving manifest to", nodePath.resolve(processedDir, "manifest.json"));
 			await fs.writeFile(nodePath.resolve(processedDir, "manifest.json"), JSON.stringify(manifest, null, "\t"), "utf8");
-			await browser.close();
 		}
 		catch (error) {
 			log(`Error`, error.message, fileAbs);
+		}
+		if (browser) {
+			await browser.close();
+			browser = null;
 		}
 
 	}, null);
@@ -443,7 +522,7 @@ async function main () {
 				describe: "extract html items from vrezka",
 				handler: async argv => {
 					console.log("== DOING ALL SEQENCE");
-					globalLogFile = `log-all--${new Date().toISOString().split(".")[0].replace("T", "_").replace(/\:/g, "-")}.txt`;
+					globalLogFile = `log-all--${getFormattedDate()}.txt`;
 					await $extract(argv);
 					await $process(argv);
 					await $compile(argv);

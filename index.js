@@ -44,7 +44,7 @@ function escapeRegex (string) {
 async function $preview (argv) {
 	const srcDir = nodePath.resolve(process.cwd(), argv.srcDir);
 	const cmdType = argv.type || "processed";
-
+	console.log("CMD TYPE", cmdType);
 	log = createLogger(srcDir);
 
 	const extractedDir = nodePath.resolve(srcDir, "extracted");
@@ -58,7 +58,7 @@ async function $preview (argv) {
 	await fs.ensureDir(processedHtmlDir);
 	await fs.ensureDir(processedImgDir);
 
-	const filesDir = cmdType ? processedHtmlDir : extractedDir;
+	const filesDir = cmdType === "processed" ? processedHtmlDir : extractedDir;
 
 	log(`===== START - PREVIEW - ${srcDir} - ${filesDir}`);
 	console.log(`===== START - PREVIEW - ${srcDir} - ${filesDir}`);

@@ -255,31 +255,55 @@ async function getMasks () {
 
 	return images.reduce(async (list, img) => {
 		list = await list;
-		await new Promise((resolve, reject) => {
-			const start = Date.now();
-			const interv = setInterval(() => {
-				if (img.complete && img.naturalWidth && img.naturalHeight) {
-					clearInterval(interv);
-					resolve();
-				}
-				else if (Date.now() - start > 5000) {
-					clearTimeout(interv);
-					throw new Error(`Failed to load image ${img.src}`);
-				}
-			}, 20);
-		});
-		let canvas = document.createElement("canvas");
-		canvas.width = img.naturalWidth;
-		canvas.height = img.naturalHeight;
-		let ctx = canvas.getContext("2d");
-		ctx.drawImage(img, 0, 0);
+		log("waiting for img to load", img.src);
 
-		fill(canvas, 50);
+		try {
+			await new Promise((resolve, reject) => {
+				let start = Date.now();
+				let retry = 0;
+				const interv = setInterval(() => {
+					if (img.complete && img.naturalWidth && img.naturalHeight) {
+						clearInterval(interv);
+						resolve();
+					}
+					else if (Date.now() - start > 5000) {
+						if (retry > 5) {
+							clearInterval(interv);
+							log(`Failed to load image ${img.src}`);
+							reject(`Failed to load image ${img.src}`);
+						}
+						else {
+							log(`Failed to load image ${img.src}, go retry ${retry}`);
+							start = Date.now();
+							img.src = img.src.split("?")[0] + "?t=" + Date.now();
+							retry++;
+						}
+					}
+				}, 20);
+			});
+			log("img is loaded", img.src);
+			if (img.naturalHeight && img.naturalWidth && (img.naturalHeight / img.naturalWidth >= 1.5)) {
+				let canvas = document.createElement("canvas");
+				canvas.width = img.naturalWidth;
+				canvas.height = img.naturalHeight;
+				let ctx = canvas.getContext("2d");
+				ctx.drawImage(img, 0, 0);
 
-		list.push({
-			src: img.src,
-			data: await new Promise(resolve => canvas.toBlob(blob => resolve(blob))),
-		});
+				fill(canvas, 50);
+				log("waiting for blob");
+				list.push({
+					src: img.src,
+					data: await new Promise(resolve => canvas.toBlob(blob => resolve(blob))),
+				});
+			}
+		}
+		catch (error) {
+			list.push({
+				src,
+				error: true,
+			});
+			log("Error loading image", JSON.stringify(error));
+		}
 		return list;
 	}, []);
 }

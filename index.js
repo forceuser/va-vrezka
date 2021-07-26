@@ -286,7 +286,7 @@ async function $process (argv) {
 			});
 			log(`Puppeteer opened`);
 			const page = await browser.newPage();
-
+			await page.exposeFunction("log", log);
 
 			// let content = await page.content();
 			let content = await fs.readFile(htmlFile, "utf8");
@@ -332,7 +332,15 @@ async function $process (argv) {
 			});
 			log(`Searching/processing gifs...`);
 			const masks = await page.evaluate(async () => {
-				const masks = await window.getMasks();
+				log("start search for gifs...");
+				let masks = [];
+				try {
+					masks = await window.getMasks();
+				}
+				catch (error) {
+					log("ERROR searching masks: " + JSON.stringify(error));
+				}
+				log("window masks:", JSON.stringify(masks));
 				await masks.reduce(async (prev, item) => {
 					await prev;
 
@@ -340,32 +348,36 @@ async function $process (argv) {
 						item.outside = true;
 					}
 
-					item.maskBinary = await new Promise(resolve => {
-						const reader = new FileReader();
-						reader.readAsBinaryString(item.data);
-						reader.onload = () => resolve(reader.result);
-					});
-
-					item.imgBinary = await new Promise((resolve, reject) => {
-						fetch(item.src).then(response => response.blob()).then(data => {
+					if (!item.error) {
+						item.maskBinary = await new Promise(resolve => {
 							const reader = new FileReader();
-							reader.readAsBinaryString(data);
+							reader.readAsBinaryString(item.data);
 							reader.onload = () => resolve(reader.result);
-						})
-							.catch(() => {
-								reject();
-							});
-					});
+						});
+
+						item.imgBinary = await new Promise((resolve, reject) => {
+							fetch(item.src).then(response => response.blob()).then(data => {
+								const reader = new FileReader();
+								reader.readAsBinaryString(data);
+								reader.onload = () => resolve(reader.result);
+							})
+								.catch(() => {
+									reject();
+								});
+						});
+					}
+
 
 				}, null);
 				return masks;
 			});
 
 			log(`Gifs found:`, masks.length);
+			log(`Gifs with error:`, masks.filter($ => $.error).length);
 
 
 
-			await masks.reduce(async (prev, {maskBinary, imgBinary, src, outside}) => {
+			await masks.reduce(async (prev, {maskBinary, imgBinary, src, outside, error}) => {
 				await prev;
 
 
@@ -377,7 +389,8 @@ async function $process (argv) {
 				}
 				const dir = nodePath.resolve(processedImgDir, nodePath.dirname(pathname));
 				const srcMod = `https://icons.monobank.com.ua/${pathname}`;
-				const some = await page.evaluate(async (src, srcMod) => {
+
+				const some = !error && await page.evaluate(async (src, srcMod) => {
 					let some = false;
 					[...document.querySelectorAll("img")].forEach(img => {
 						// console.log("IMG.src", img.src, src, img.src === src);
@@ -400,7 +413,13 @@ async function $process (argv) {
 					return some;
 				}, src, srcMod);
 
-				if (some) {
+				if (error) {
+					const gifFile = nodePath.resolve(dir, `${nodePath.basename(pathname)}`);
+					manifest[file] = manifest[file] || {};
+					manifest[file].gifErrors = manifest[file].gifErrors || [];
+					manifest[file].gifErrors.push(nodePath.relative(srcDir, gifFile));
+				}
+				else if (some) {
 
 					log(`Image dir:`, dir);
 					await fs.ensureDir(dir);
@@ -544,6 +563,7 @@ async function main () {
 				aliases: [],
 				describe: "extract html items from vrezka",
 				handler: async argv => {
+					globalLogFile = `log-all--${getFormattedDate()}.txt`;
 					await $extract(argv);
 				},
 				builder: yargs => {
@@ -561,6 +581,7 @@ async function main () {
 				aliases: [],
 				describe: "process extracted html files",
 				handler: async argv => {
+					globalLogFile = `log-all--${getFormattedDate()}.txt`;
 					await $process(argv);
 				},
 				builder: yargs => {
@@ -578,6 +599,7 @@ async function main () {
 				aliases: [],
 				describe: "compile html items into vrezka json file",
 				handler: async argv => {
+					globalLogFile = `log-all--${getFormattedDate()}.txt`;
 					await $compile(argv);
 				},
 				builder: yargs => {
@@ -602,6 +624,7 @@ async function main () {
 				aliases: [],
 				describe: "preview extracted html items",
 				handler: async argv => {
+					globalLogFile = `log-all--${getFormattedDate()}.txt`;
 					await $preview(argv);
 				},
 				builder: yargs => {

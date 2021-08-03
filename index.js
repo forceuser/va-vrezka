@@ -1,87 +1,95 @@
 #!/usr/bin/env node
+
 import process from "process";
-import nodePath, {basename, resolve} from "path";
+import nodePath, { basename, resolve } from "path";
 import fs from "fs-extra";
 import yargs from "yargs";
 import globby from "globby";
 import puppeteer from "puppeteer";
 import pretty from "pretty";
-import {pathToFileURL, fileURLToPath} from "url";
+import { pathToFileURL, fileURLToPath } from "url";
 import minify from "minify";
 import replaceAll from "string.prototype.replaceall";
 import matchAll from "string.prototype.matchall";
-import {Buffer} from "buffer";
+import { Buffer } from "buffer";
 import express from "express";
 import http from "http";
 import fp from "find-free-port";
 import open from "open";
 import JSZip from "jszip";
+import e from "express";
 
 
-const __filename = fileURLToPath(import.meta.url);
+const __filename = fileURLToPath(
+    import.meta.url);
 const __dirname = nodePath.dirname(__filename);
 
 let globalLogFile;
 const createLogger = (srcDir = process.cwd(), srcFile = globalLogFile || "log.txt") => {
-	const logFile = fs.createWriteStream(nodePath.resolve(srcDir, srcFile), {"flags": "a"});
-	function logger (...args) {
-		// console.log(...args);
-		logFile.write(`[${new Date().toLocaleString("ru")}]   ${args.join(" ")} \n`);
-	}
-	logger.close = () => {
-		logFile.end();
-	};
-	return logger;
+    const logFile = fs.createWriteStream(nodePath.resolve(srcDir, srcFile), { "flags": "a" });
+
+    function logger(...args) {
+        // console.log(...args);
+        logFile.write(`[${new Date().toLocaleString("ru")}]   ${args.join(" ")} \n`);
+    }
+    logger.close = () => {
+        logFile.end();
+    };
+    logger.con = (...args) => {
+        console.log(...args);
+        return logger(...args);
+    }
+    return logger;
 };
 
 let log;
 
 
-function escapeRegex (string) {
-	return string.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
+function escapeRegex(string) {
+    return string.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
 }
 
-async function $preview (argv) {
-	const srcDir = nodePath.resolve(process.cwd(), argv.srcDir);
-	const cmdType = argv.type || "processed";
-	console.log("CMD TYPE", cmdType);
-	log = createLogger(srcDir);
+async function $preview(argv) {
+    const srcDir = nodePath.resolve(process.cwd(), argv.srcDir);
+    const cmdType = argv.type || "processed";
+    console.log("CMD TYPE", cmdType);
+    log = createLogger(srcDir);
 
-	const extractedDir = nodePath.resolve(srcDir, "extracted");
-	const compiledDir = nodePath.resolve(srcDir, "compiled");
-	const processedDir = nodePath.resolve(srcDir, "processed");
-	const processedHtmlDir = nodePath.resolve(srcDir, "processed/html");
-	const processedImgDir = nodePath.resolve(srcDir, "processed/img");
-	await fs.ensureDir(extractedDir);
-	await fs.ensureDir(compiledDir);
-	await fs.ensureDir(processedDir);
-	await fs.ensureDir(processedHtmlDir);
-	await fs.ensureDir(processedImgDir);
+    const extractedDir = nodePath.resolve(srcDir, "extracted");
+    const compiledDir = nodePath.resolve(srcDir, "compiled");
+    const processedDir = nodePath.resolve(srcDir, "processed");
+    const processedHtmlDir = nodePath.resolve(srcDir, "processed/html");
+    const processedImgDir = nodePath.resolve(srcDir, "processed/img");
+    await fs.ensureDir(extractedDir);
+    await fs.ensureDir(compiledDir);
+    await fs.ensureDir(processedDir);
+    await fs.ensureDir(processedHtmlDir);
+    await fs.ensureDir(processedImgDir);
 
-	const filesDir = cmdType === "processed" ? processedHtmlDir : extractedDir;
+    const filesDir = cmdType === "processed" ? processedHtmlDir : extractedDir;
 
-	log(`===== START - PREVIEW - ${srcDir} - ${filesDir}`);
-	console.log(`===== START - PREVIEW - ${srcDir} - ${filesDir}`);
+    log(`===== START - PREVIEW - ${srcDir} - ${filesDir}`);
+    console.log(`===== START - PREVIEW - ${srcDir} - ${filesDir}`);
 
-	const files = await globby(["./*.html"], {cwd: filesDir, absolute: true});
+    const files = await globby(["./*.html"], { cwd: filesDir, absolute: true });
 
 
-	const expressApp = express();
-	expressApp.set("trust proxy", true); // app.settings.get("trust-proxy")
+    const expressApp = express();
+    expressApp.set("trust proxy", true); // app.settings.get("trust-proxy")
 
-	const router = express.Router();
+    const router = express.Router();
 
-	router.get("/", async (req, res) => {
-		let manifest = {};
-		if (cmdType === "processed") {
-			manifest = JSON.parse(await fs.readFile(nodePath.join(processedDir, "manifest.json"), "utf8"));
-		}
-		// console.log("manifest", manifest);
-		// console.log(processedDir);
-		// list files
-		res.set("Content-Type", "text/html");
-		const style = `<style>*{font-family:sans-serif}table{border-collapse:collapse;margin:25px 0;font-size:.9em;min-width:400px;border-radius:5px 5px 0 0;overflow:hidden;box-shadow:0 0 20px rgba(0,0,0,.15)}table thead tr{background-color:#009879;color:#fff;text-align:left;font-weight:700}table td,table th{padding:12px 15px}table tbody tr{border-bottom:1px solid #ddd}table tbody tr:nth-of-type(even){background-color:#f3f3f3}table tbody tr:last-of-type{border-bottom:2px solid #009879}</style>`;
-		const html = style + `<!doctype HTML><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0"/><title>va-vrezka preview ${filesDir}</title></head><body><table><thead><tr><th>html item</th><th>gifs</th><th>masks</th><th>string replaced</th></tr></thead><tbody>${files.map(fileAbs => {
+    router.get("/", async(req, res) => {
+                let manifest = {};
+                if (cmdType === "processed") {
+                    manifest = JSON.parse(await fs.readFile(nodePath.join(processedDir, "manifest.json"), "utf8"));
+                }
+                // console.log("manifest", manifest);
+                // console.log(processedDir);
+                // list files
+                res.set("Content-Type", "text/html");
+                const style = `<style>*{font-family:sans-serif}table{border-collapse:collapse;margin:25px 0;font-size:.9em;min-width:400px;border-radius:5px 5px 0 0;overflow:hidden;box-shadow:0 0 20px rgba(0,0,0,.15)}table thead tr{background-color:#009879;color:#fff;text-align:left;font-weight:700}table td,table th{padding:12px 15px}table tbody tr{border-bottom:1px solid #ddd}table tbody tr:nth-of-type(even){background-color:#f3f3f3}table tbody tr:last-of-type{border-bottom:2px solid #009879}</style>`;
+                const html = style + `<!doctype HTML><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0"/><title>va-vrezka preview ${filesDir}</title></head><body><table><thead><tr><th>html item</th><th>gifs</th><th>masks</th><th>string replaced</th></tr></thead><tbody>${files.map(fileAbs => {
 			const file = nodePath.relative(filesDir, fileAbs);
 			return [
 				`<tr>`,
@@ -531,6 +539,214 @@ async function $extract (argv) {
 	console.log(`${extracted.size} file(s) extracted to`, extractedDir);
 }
 
+
+
+async function $process2 (argv) {
+	const fileAbs = nodePath.resolve(process.cwd(), argv.file);
+	const srcDir = nodePath.dirname(fileAbs);
+	const file = nodePath.relative(srcDir, fileAbs);
+	const fileName = nodePath.basename(file, nodePath.extname(file));
+	const resultDir = nodePath.resolve(srcDir, "result");
+	await fs.remove(resultDir);
+	await fs.ensureDir(resultDir);
+	log = createLogger(srcDir);
+
+	log(`===== START - PROCESS2 - ${srcDir}`);
+	console.log(`===== START - PROCESS2 - ${srcDir}`);
+
+	log(`=== Processing file`, file);
+	const data = JSON.parse(await fs.readFile(fileAbs, "utf8"));
+	const count = data.entries.length;
+	const manifest = {};
+	const broken = [];
+	await data.entries.reduce(async (prev, item, idx) => {
+		await prev;
+
+		await Promise.all(Object.entries(item.texts).map(async ([lang, texts]) => {
+			log.con(`[${idx + 1}/${count}]`, "processing:", item.id, lang);
+			// console.log("texts", texts);
+			let browser;
+			let content = texts?.text;
+			if (!content) {
+				return;
+			}
+			try {
+				log(`Opening puppeteer...`);
+				browser = await puppeteer.launch({
+					headless: true,
+					ignoreHTTPSErrors: true,
+					args: [
+						// "--no-sandbox",
+						"--disable-web-security",
+					],
+				});
+				log(`Puppeteer opened`);
+				const page = await browser.newPage();
+				await page.exposeFunction("log", log);
+				await page.exposeFunction("con", log.con);
+				await page.exposeFunction("addBroken", (item) => {
+					broken.push(item);
+				});
+
+				let hasEmptyNodes = false;
+				await page.exposeFunction("markEmpty", () => {
+					hasEmptyNodes = true;
+				});
+
+				const occurDirectAmazonUrl = [...matchAll(content, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/")];
+				if (occurDirectAmazonUrl?.length) {
+					log(`Replacing direct amazon urls (${occurDirectAmazonUrl.length}):`, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/", "->", "https://icons.monobank.com.ua/");
+					content = replaceAll(content, "https://s3-eu-west-1.amazonaws.com/icons.ftband.net/", "https://icons.monobank.com.ua/");
+
+					manifest[file] = manifest[file] || {};
+					manifest[file].stringReplaced = (manifest[file].stringReplaced || 0) + occurDirectAmazonUrl.length;
+				}
+
+				let isFtl = false;
+				if (content.includes("[#ftl]")) {
+					isFtl = true;
+					content = content.replace(/\[\#ftl\]/igm, "");
+				}
+
+				await page.evaluate(async (content, item, lang) => {
+					const isVoid = (type) => `area, base, br, col, embed, hr, img, input, link, meta, param, source, track, wbr`.split(", ").includes(type.toLowerCase());
+					const isAvoid = (type) => `title, meta, link`.split(", ").includes(type.toLowerCase());
+					function nodesUnder (el) {
+						const result = [];
+						const walk = document.createTreeWalker(
+							el,
+							NodeFilter.SHOW_ELEMENT,
+							{
+								acceptNode (node) {
+									if (!(node.textContent || "").trim()) {
+										return NodeFilter.FILTER_ACCEPT;
+									}
+									return NodeFilter.FILTER_REJECT;
+								},
+							},
+							false
+						);
+						let node = walk.nextNode();
+						while (node) {
+							result.push(node);
+							node = walk.nextNode();
+						}
+						return result;
+					}
+					let resolve;
+					const promise = new Promise(_resolve => resolve = _resolve);
+
+
+					// if (item.id === "cashbackCategory48") {
+					// 	con("IIII", content);
+					// }
+					document.open();
+					document.addEventListener("DOMContentLoaded", function(event) {
+						con("DOMContentLoaded", item.id, lang);
+						action();
+					});
+					document.write(content);
+					document.close();
+					function action () {
+						try {
+							con("action", item.id, lang);
+							con("con-1", item.id, lang);
+							const links = [
+								...document.querySelectorAll(`link[rel*="stylesheet"]`),
+								...document.querySelectorAll(`link[rel*="template-dark.css"]`),
+								...document.querySelectorAll(`script[src*="dark-scheme.js"]`),
+							];
+							log(`links found`, links.length);
+							links && [...links].forEach(link => {
+								link.remove();
+							});
+							document.body.dataset.tplKind = "info";
+
+							const style = document.createElement("link");
+							style.rel = "stylesheet";
+							style.href = "https://icons.monobank.com.ua/skk/monobank/other_skk/template-dark-v2.css";
+							const script = document.createElement("script");
+							script.src = "https://icons.monobank.com.ua/skk/monobank/other_skk/dark-scheme.js";
+							document.head.appendChild(style);
+							document.head.appendChild(script);
+
+							con("con-2", item.id, lang);
+							const brokenEls = document.querySelectorAll(`*[style*="color"]`);
+							if (brokenEls.length) {
+								const els = [...brokenEls].map(el => el.outerHTML);
+								con("broken found", item.id, brokenEls.length, els);
+
+								[...brokenEls].forEach(el => el.style.color = null);
+								addBroken({id: item.id, lang: lang, count: brokenEls.length, els});
+							}
+							con("con-3", item.id, lang);
+							const emptyNodes = [...document.body.querySelectorAll("*")].filter($ => !$.lastElementChild && !($.textContent || "").trim() && !isVoid($.tagName) && !isAvoid($.tagName));
+							if (emptyNodes.length) {
+								con("emptyNodes", ...[...emptyNodes].map(el => el.outerHTML));
+								emptyNodes.forEach(el => el.remove());
+								markEmpty();
+							}
+							con("con-4", item.id, lang);
+							[...document.body.querySelectorAll("br + br")].forEach(el => el.remove());
+						}
+						catch (error) {
+							con("ERROR", item.id, lang, document.documentElement.outerHTML);
+						}
+						resolve();
+					}
+
+					// if (document.readyState === "complete" || document.readyState === "interactive") {
+
+					// }
+					// else {
+					// 	window.addEventListener("DOMContentLoaded", action);
+					// }
+					return promise;
+				}, content, item, lang);
+
+				content = await page.content();
+				if (isFtl) {
+					content = `[#ftl]\n${content}`;
+				}
+				const formatted = pretty(content, {
+					"indent-with-tabs": true,
+					"indent_char": "\t",
+					indent_size: 1,
+				});
+
+				// result.push(item);
+				console.log("ready");
+				log("Saving processed html to", nodePath.resolve(resultDir, `${item.id}-${lang}.html`));
+
+				await fs.writeFile(nodePath.resolve(resultDir, `${item.id}-${lang}.html`), formatted, "utf8");
+
+				texts.text = await minify.html(content, {
+					html: {
+						"removeAttributeQuotes": false,
+						"removeOptionalTags": false,
+						"removeRedundantAttributes": false,
+						"useShortDoctype": false,
+						"removeEmptyAttributes": false,
+						"removeEmptyElements": false,
+					},
+				});
+			}
+			catch (error) {
+				log(`Error`, error.message, fileAbs, `${item.id}-${lang}`);
+			}
+			if (browser) {
+				await browser.close();
+				browser = null;
+			}
+		}))
+
+
+	}, null);
+
+	await fs.writeFile(nodePath.resolve(resultDir, `${fileName}.json`), JSON.stringify(data), "utf8");
+	await fs.writeFile(nodePath.resolve(resultDir, `broken.json`), JSON.stringify(broken, null, "\t"), "utf8");
+}
+
 async function main () {
 	const argv = await yargs(process.argv.slice(2))
 		// .parserConfiguration({"strip-aliased": true})
@@ -592,6 +808,25 @@ async function main () {
 							type: "string",
 							default: ".",
 						});
+				},
+			},
+			{
+				command: "process2 [file]",
+				aliases: [],
+				describe: "process2",
+				handler: async argv => {
+					globalLogFile = `log-all--${getFormattedDate()}.txt`;
+					await $process2(argv);
+				},
+				builder: yargs => {
+					return yargs
+						.positional("file", {
+							alias: ["f"],
+							describe: "source dir",
+							type: "string",
+							default: ".",
+						});
+
 				},
 			},
 			{
